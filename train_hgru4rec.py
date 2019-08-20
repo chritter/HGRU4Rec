@@ -14,47 +14,90 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s: %(name)s: %(levelname)s: %(message)s")
 
+
+
+# Parameters
+# ==================================================
+
 parser = argparse.ArgumentParser()
-parser.add_argument('session_layers', type=str)
-parser.add_argument('user_layers', type=str)
-parser.add_argument('--loss', type=str, default='top1')
-parser.add_argument('--hidden_act', type=str, default='tanh')
-parser.add_argument('--learning_rate', type=float, default=0.001)
-parser.add_argument('--batch_size', type=int, default=50)
-parser.add_argument('--momentum', type=float, default=0.0)
-parser.add_argument('--dropout_p_hidden_usr', type=float, default=0.3)
-parser.add_argument('--dropout_p_hidden_ses', type=float, default=0.3)
-parser.add_argument('--dropout_p_init', type=float, default=0.3)
-parser.add_argument('--decay', type=float, default=0.96)
-parser.add_argument('--grad_cap', type=float, default=0.0)
-parser.add_argument('--sigma', type=float, default=0.0)
-parser.add_argument('--n_epochs', type=int, default=50)
-parser.add_argument('--init_as_normal', type=int, default=0)
-parser.add_argument('--reset_after_session', type=int, default=1)
+
+# ----------------------- Setup
+# input
 parser.add_argument('--user_key', type=str, default='visitorid')
 parser.add_argument('--item_key', type=str, default='itemid')
 parser.add_argument('--session_key', type=str, default='session_id')
 parser.add_argument('--time_key', type=str, default='timestamp')
+#
 parser.add_argument('--save_to', type=str, default=None)
 parser.add_argument('--load_from', type=str, default=None)
 parser.add_argument('--early_stopping', action='store_true', default=False)
-parser.add_argument('--hdf_path', type=str, default='')
+
+# origin of input data, in hdf format
+parser.add_argument('--hdf_path', type=str, default='data/retail_rocket.hdf')
+# checkpoint directory (must exist)
 parser.add_argument('--checkpoint_dir', type=str, default=r'./model')
+# saves TF summaries under 'train' for training
 parser.add_argument('--log_dir', type=str, default=r'./log')
-# user bias parameters
+
+# ----------------------- Hyperparameter
+# 100 hidden units per GRU layer (paper). Multiple layers for GRU_ses, GRU_usr did not improve performance (paper)
+parser.add_argument('--session_layers', type=str,default='100')
+parser.add_argument('--user_layers', type=str,default='100')
+
+# type of loss, only default possible; top1 outperforms  other losses (paper)
+parser.add_argument('--loss', type=str, default='top1')
+# activation function for GRU_usr and GRU_ses, options tanh or relu
+parser.add_argument('--hidden_act', type=str, default='tanh')
+parser.add_argument('--batch_size', type=int, default=50)
+
+# applies dropout (keep prob) to output of each cell in GRU_usr
+parser.add_argument('--dropout_p_hidden_usr', type=float, default=0.3)
+# applies dropout (keep prob) to output of each cell in GRU_ses
+parser.add_argument('--dropout_p_hidden_ses', type=float, default=0.3)
+parser.add_argument('--dropout_p_init', type=float, default=0.3)
+
+# optimizer variables: decayed_learning_rate = learning_rate * decay_rate/decay ^ (global_step / 1**4)
+parser.add_argument('--learning_rate', type=float, default=0.001)
+parser.add_argument('--decay', type=float, default=0.96)
+# clip gradients to prevent exploding gradients, default no clipping.
+parser.add_argument('--grad_cap', type=float, default=0.0)
+# this momentum variable is not used!
+parser.add_argument('--momentum', type=float, default=0.0)
+
+
+# initialization parameters, sigma is std
+parser.add_argument('--sigma', type=float, default=0.0)
+# initialize as normal, True/False
+parser.add_argument('--init_as_normal', type=int, default=0)
+
+
+# use 10 epochs (paper)
+parser.add_argument('--n_epochs', type=int, default=50)
+parser.add_argument('--reset_after_session', type=int, default=1)
+
+# activation function for initialization of hidden states of GRU_ses based on GRU_usr
 parser.add_argument('--user_to_ses_act', type=str, default='tanh')
+# select the type of model: HRNN Init or HRNN All
 parser.add_argument('--user_propagation_mode', type=str, default='all')
+# ???
 parser.add_argument('--user_to_output', type=int, default=1)
+
 args = parser.parse_args()
 
+
+
+# load data, separated into train and test
 sessions_path = args.hdf_path
 logger.info('Loading data from: {}'.format(sessions_path))
 train_data = pd.read_hdf(sessions_path, 'train')
+# use test data only if early stopping is used (why?)
 test_data = pd.read_hdf(sessions_path, 'valid_train') if args.early_stopping else None
+print('data shapes',train_data.shape)#,test_data.shape)
 
 session_layers = [int(x) for x in args.session_layers.split(',')]
 user_layers = [int(x) for x in args.user_layers.split(',')]
 
+# log parameters
 logger.info('session_layers: {}'.format(args.session_layers))
 logger.info('user_layers: {}'.format(args.user_layers))
 logger.info('loss: {}'.format(args.loss))
@@ -81,6 +124,7 @@ n_items = len(itemids)
 
 gpu_config = tf.ConfigProto()
 gpu_config.gpu_options.allow_growth = True
+
 with tf.Session(config=gpu_config) as sess:
   m = model.HGRU4Rec(sess,
         session_layers=session_layers,

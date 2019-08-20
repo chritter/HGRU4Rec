@@ -13,9 +13,7 @@ logging.basicConfig(
     format="%(asctime)s: %(name)s: %(levelname)s: %(message)s")
 
 class HGRU4Rec:
-  """
-
-  """
+  # HGRU4Rec Network
   def __init__(self, sess, session_layers, user_layers, n_epochs=10, batch_size=50, learning_rate=0.001,
                decay=0.96, grad_cap=0, sigma=0, dropout_p_hidden_usr=0.3,
                dropout_p_hidden_ses=0.3, dropout_p_init=0.3, init_as_normal=False,
@@ -23,7 +21,12 @@ class HGRU4Rec:
                session_key='session_id', item_key='item_id', time_key='created_at', user_key='user_id', n_sample=0,
                sample_alpha=0.75, user_propagation_mode='init',
                user_to_output=False, user_to_session_act='tanh', n_items=4, checkpoint_dir='', log_dir=''):
+    '''
+    Set initial the parameters according to user input
+    final_act: Not used as input parameter! output layer activation function
+    '''
 
+    # define functions
     self.sess = sess
     self.session_layers = session_layers
     self.user_layers = user_layers
@@ -44,7 +47,9 @@ class HGRU4Rec:
     self.grad_cap = grad_cap
 
     # custom start
+    # should there be an option to change this to false?
     self.is_training = True
+    # fixed steps
     self.decay_steps = 1e4
     self.n_items = n_items
     self.log_dir = log_dir
@@ -61,6 +66,7 @@ class HGRU4Rec:
       raise NotImplementedError
 
     if loss == 'top1':
+      # choose final activation: tanh is used
       if final_act == 'linear':
         self.final_activation = self.linear
       elif final_act == 'relu':
@@ -71,6 +77,7 @@ class HGRU4Rec:
     else:
       raise NotImplementedError('loss {} not implemented'.format(loss))
 
+    # choose activation function of hidden layers
     if hidden_act == 'relu':
       self.hidden_activation = self.relu
     elif hidden_act == 'tanh':
@@ -92,8 +99,13 @@ class HGRU4Rec:
     if not path.isdir(self.checkpoint_dir):
       raise Exception("[!] Checkpoint Dir not found")
 
+    # build model
     self.build_model()
+
+    # init variables
     self.sess.run(tf.global_variables_initializer())
+
+    # use save
     self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=10)
 
     if self.is_training:
@@ -121,8 +133,15 @@ class HGRU4Rec:
 
   ############################LOSS FUNCTIONS######################
   def top1(self, yhat):
+    '''
+    TOP1 loss
+    :param yhat:
+    :return:
+    '''
     with tf.name_scope("top1"):
       yhatT = tf.transpose(yhat)
+      # operation 1/n sigmoid(r_s_j - r_s_i) + sigmoid(r_s_j)
+      # r_s_i is tf.diag_part(yhat)
       term1 = tf.reduce_mean(tf.nn.sigmoid(-tf.diag_part(yhat)+yhatT)+tf.nn.sigmoid(yhatT**2), axis=0)
       term2 = tf.nn.sigmoid(tf.diag_part(yhat)**2) / self.batch_size
       return tf.reduce_mean(term1 - term2)
@@ -133,17 +152,31 @@ class HGRU4Rec:
     """
 
     def __init__(self, cells, state_is_tuple=True, hgru4rec=None):
+      '''
+      Initialize, TF MultiRNNCell, allow states inputs and outputs as n-tuples (state_is_tuple=True)
+      :param cells:
+      :param state_is_tuple:
+      :param hgru4rec:
+      '''
       super(HGRU4Rec.UserGRUCell4Rec, self).__init__(cells, state_is_tuple=state_is_tuple)
       #super().__init__(cells, state_is_tuple=state_is_tuple)
+      # hgru4rec object to assign resetting of hidden states later in call
       self.hgru4rec = hgru4rec
 
     def call(self, inputs, state):
-      """Run this multi-layer cell on inputs, starting from state."""
-      #return super(HGRU4Rec.UserGRUCell4Rec, self).call(inputs, state)
+      '''
+      Run this multi-layer cell on inputs, starting from state.
+      Should take as input the session-level representations
+      :param inputs: hidden state from last session of user (self.Hs[-1]) , tuple(self.Hu
+      :param state: hidden state of previous user representation with one state per cell (tuple(self.Hu))
+      :return: Output and state of GRU_usr
+      '''
 
       cur_state_pos = 0
       cur_inp = inputs
       new_states = []
+
+      # loop over cells of TF MultiRNNCell (self) - is this documented?
       for i, cell in enumerate(self._cells):
         with vs.variable_scope("cell_%d" % i):
           if self._state_is_tuple:
@@ -156,7 +189,11 @@ class HGRU4Rec:
             cur_state = array_ops.slice(state, [0, cur_state_pos],
                                         [-1, cell.state_size])
             cur_state_pos += cell.state_size
+          # (current) input, current state for cell
+          # c_m =??, output o, hidden state h
           o, h = cell(cur_inp, cur_state)
+
+          # reset hidden states of user for specific sessions in batch when start of new session?? and start of new user
           h = tf.where(self.hgru4rec.sstart, h, cur_state, name='sel_hu_1')
           h = tf.where(self.hgru4rec.ustart, tf.zeros(tf.shape(h)), h, name='sel_hu_2')
 
@@ -175,10 +212,13 @@ class HGRU4Rec:
     """
     self.X = tf.placeholder(tf.int32, [self.batch_size], name='input_x')
     self.Y = tf.placeholder(tf.int32, [self.batch_size], name='output_y')
+    # hidden layer for session
     self.Hs = [tf.placeholder(tf.float32, [self.batch_size, s_size], name='Hs') for s_size in
                   self.session_layers]
+    # hidden layer for user
     self.Hu = [tf.placeholder(tf.float32, [self.batch_size, u_size], name='Hu') for u_size in
                   self.user_layers]
+    # for marking the start of a session or a user?
     self.sstart = tf.placeholder(tf.bool, [self.batch_size], name='sstart')
     self.ustart = tf.placeholder(tf.bool, [self.batch_size], name='usstart')
 
@@ -187,73 +227,110 @@ class HGRU4Rec:
     # USER GRU
     with tf.variable_scope('user_gru'):
       cells = []
+      # create each layer in GRU_usr, with number of units u_size
       for u_size in self.user_layers:
         cell = tf.nn.rnn_cell.GRUCell(u_size, activation=self.hidden_act)
+        # applies dropout to GRU cell outuput
         cells.append(tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=self.dropout_p_hidden_usr))
+      # init class UserGRUCell4Rec to assign cells
       stacked_cell = self.UserGRUCell4Rec(cells, hgru4rec=self)
+      # pass hidden state of last session, hidden state of current user representation
+      # calculate output and new state of GRU_usr
       output, state = stacked_cell(self.Hs[-1], tuple(self.Hu))
+      # (is c_m for session m in paper)
       self.Hu_new = state
 
     # SESSION GRU
     with tf.variable_scope('session_gru'):
+
+      # initialization of weights
       sigma = self.sigma if self.sigma != 0 else np.sqrt(6.0 / (self.n_items + sum(self.session_layers)))
       if self.init_as_normal:
         initializer = tf.random_normal_initializer(mean=0, stddev=sigma)
       else:
         initializer = tf.random_uniform_initializer(minval=-sigma, maxval=sigma)
+      # input embedding matrix
       embedding = tf.get_variable('embedding', [self.n_items, self.session_layers[0]], initializer=initializer)
+      # output embedding matrix
       softmax_W = tf.get_variable('softmax_w', [self.n_items, self.session_layers[0]], initializer=initializer)
       softmax_b = tf.get_variable('softmax_b', [self.n_items], initializer=tf.constant_initializer(0.0))
 
       cells = []
+      # create each layer in GRU_ses, with number of units u_size
       for s_size in self.session_layers:
         cell = tf.nn.rnn_cell.GRUCell(s_size, activation=self.hidden_act)
         cells.append(tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=self.dropout_p_hidden_ses))
+      # here we just apply a TF MultiRNNCell function, in contrast to UserGRUCell4Rec
       stacked_cell = tf.nn.rnn_cell.MultiRNNCell(cells)
 
+      # construct weights of hidden layers
       input_states=[]
       for j in range(len(self.session_layers)):
+        # initializie hidden state for each layer of session based on last hidden state of user, with
+        # number of units given by session_layer; applies user_to_session activation function, dropout (paper)
+        # tf.layers.dense implements W_init*c_m +b_init of Eq. 4 in paper
         h_s_init = tf.layers.dropout(self.s_init_act(tf.layers.dense(self.Hu_new[-1], self.session_layers[j])),
                                    rate=self.dropout_p_init, training=self.is_training,
                                    name='h_s_init_{}'.format(j))
+        # sessions in batch which start with new session initialize with h_s_init, else take hidden layer of session
         h_s = tf.where(self.sstart, h_s_init, self.Hs[j], name='sel_hs_1_{}'.format(j))
+        # session in batch which start with new user initialize with zeros
         h_s = tf.where(self.ustart, tf.zeros(tf.shape(h_s)), h_s, name='sel_hs_2_{}'.format(j))
         input_states.append(h_s)
 
+      # lookup input embeddings based on input batch X
       inputs = tf.nn.embedding_lookup(embedding, self.X, name='embedding_x')
+
+      # get output and state of GRU_ses, based on embedded X and input states
       output, state = stacked_cell(inputs,
                                    tuple(input_states)
                                    )
       self.Hs_new = state
+
+
       if self.is_training:
         '''
         Use other examples of the minibatch as negative samples.
         '''
+        # for output layer, get item output embedding
         sampled_W = tf.nn.embedding_lookup(softmax_W, self.Y)
         sampled_b = tf.nn.embedding_lookup(softmax_b, self.Y)
+        # output * W + b
         logits = tf.matmul(output, sampled_W, transpose_b=True) + sampled_b
+        # output activation function
         self.yhat = self.final_activation(logits)
+        # TOP1 loss/cost calculation
         self.cost = self.loss_function(self.yhat)
         tf.summary.scalar('cost', self.cost)
       else:
+        # for predictions, calculate directly output
         logits = tf.matmul(output, softmax_W, transpose_b=True) + softmax_b
+        # save predictions in yhat
         self.yhat = self.final_activation(logits)
 
     if not self.is_training:
       return
 
     with tf.name_scope("optimizer"):
+
+      # paper uses AdaGrad
+
+      # implements exponential decay of learning rate with minimum of lr of 1e-5
       self.lr = tf.maximum(1e-5,
                          tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay,
                                                     staircase=True))
-      '''
-      Try different optimizers.
-      '''
+      # save lr
       tf.summary.scalar('lr', self.lr)
+
+      # use Adam optimizer instead of AdaGrad as in paper
       optimizer = tf.train.AdamOptimizer(self.lr)
 
+      # get all trainable variables
       tvars = tf.trainable_variables()
+      # calculate gradients of variables based on loss
       gvs = optimizer.compute_gradients(self.cost, tvars)
+
+      # gradient clipping to avoid exploding gradients
       if self.grad_cap > 0:
         capped_gvs = [(tf.clip_by_norm(grad, self.grad_cap), var) for grad, var in gvs]
       else:
@@ -264,16 +341,23 @@ class HGRU4Rec:
     self.train_writer = tf.summary.FileWriter(path.join(self.log_dir, 'train'), self.sess.graph)
 
   def preprocess_data(self, data):
+      '''
+      Calculate index columns for session and users
+      :param data:
+      :return:
+      '''
       # sort by user and time key in order
       data.sort_values([self.user_key, self.session_key, self.time_key], inplace=True)
       data.reset_index(drop=True, inplace=True)
+      # offset index for sessions
       offset_session = np.r_[0, data.groupby([self.user_key, self.session_key], sort=False).size().cumsum()[:-1]]
+      # offset index for users
       user_indptr = np.r_[0, data.groupby(self.user_key, sort=False)[self.session_key].nunique().cumsum()[:-1]]
       return user_indptr, offset_session
 
   def iterate(self, data, offset_sessions, user_indptr, reset_state=True, is_validation=False):
     """
-
+    Training for one epoch.
     :param data:
     :param offset_sessions:
     :param user_indptr:
@@ -371,20 +455,28 @@ class HGRU4Rec:
     return avgc
 
   def fit(self, train_data, valid_data=None, patience=3, margin=1.003):
-    """
+    '''
+    Training. Pre-process training data and perform iterations over epochs.
     :param train_data:
     :param valid_data:
+    :param patience:
+    :param margin:
     :return:
-    """
+    '''
+
     self.error_during_train = False
 
+    # map item ids ItemIdx to items
     itemids = train_data[self.item_key].unique()
     self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
     train_data = pd.merge(train_data,
                           pd.DataFrame({self.item_key: itemids, 'ItemIdx': self.itemidmap[itemids].values}),
                           on=self.item_key, how='inner')
+
+    # get index pointers for users and sessions
     user_indptr, offset_sessions = self.preprocess_data(train_data)
 
+    # if validation set exists, then repeat above for validation set
     user_indptr_valid, offset_sessions_valid = None, None
     if valid_data is not None:
       valid_data = pd.merge(valid_data,
@@ -392,15 +484,22 @@ class HGRU4Rec:
                             on=self.item_key, how='inner')
       user_indptr_valid, offset_sessions_valid = self.preprocess_data(valid_data)
 
+    #
     epoch = 0
     best_valid = None
     my_patience = patience
+
+    # why two my_patience?
     while epoch < self.n_epochs and my_patience > 0 and my_patience > 0:
+
+      # train on batches of epoch
       train_cost = self.iterate(train_data, offset_sessions, user_indptr)
+
       if np.isnan(train_cost):
         print('Epoch {}: Nan error!'.format(epoch, train_cost))
         return
 
+      # check on validation data for estimating the loss/cost
       if valid_data is not None:
         valid_cost = self.iterate(valid_data, offset_sessions_valid, user_indptr_valid)
         if best_valid is None or valid_cost < best_valid:

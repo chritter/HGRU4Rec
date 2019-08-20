@@ -365,7 +365,7 @@ class HGRU4Rec:
     :return:
     """
 
-    # variables to manage iterations over users
+    # variables to manage iterations over users#
     n_users = len(user_indptr)
     offset_users = offset_sessions[user_indptr]
     user_idx_arr = np.arange(n_users - 1)

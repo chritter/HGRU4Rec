@@ -2,6 +2,8 @@
 
 Christian Ritter
 
+HGru4Rec by Quadrana17
+
 ### Comments
 
 * summary stats is not written out. needs to be done
@@ -12,6 +14,8 @@ Christian Ritter
 * It is differentiatied between input and output embeddings
 * Parameter final_act in model module is not used as input parameter in train_*
 * Uses exponential decayed lr with Adam instead of AdaGrad as in paper
+* modifications for predictions
+    * HGRU4Rec initialization for self.is_training==False needs to be modified
 
 #### Data
 

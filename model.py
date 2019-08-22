@@ -358,6 +358,7 @@ class HGRU4Rec:
   def iterate(self, data, offset_sessions, user_indptr, reset_state=True, is_validation=False):
     """
     Training for one epoch.
+    Implements User-parallel mini-batches
     :param data:
     :param offset_sessions:
     :param user_indptr:
@@ -365,91 +366,141 @@ class HGRU4Rec:
     :return:
     """
 
-    # variables to manage iterations over users#3
+    # variables to manage iterations over users
+    # number of all users in training set
     n_users = len(user_indptr)
     offset_users = offset_sessions[user_indptr]
     user_idx_arr = np.arange(n_users - 1)
+    # number of users to iterative over for each batch
     user_iters = np.arange(self.batch_size)
+    # iterator to be incremented when new users are processed
     user_maxiter = user_iters.max()
+    # identifies the start and end for users of first batch
     user_start = offset_users[user_idx_arr[user_iters]]
     user_end = offset_users[user_idx_arr[user_iters] + 1]
 
     # variables to manage iterations over sessions
+    #
     session_iters = user_indptr[user_iters]
+    # identifies the start and end of each session for each user
     session_start = offset_sessions[session_iters]
     session_end = offset_sessions[session_iters + 1]
 
+    # flags for resetting hidden states of sessions and users, done at end of each session and user below
     sstart = np.zeros((self.batch_size,), dtype=np.bool)
     ustart = np.zeros((self.batch_size,), dtype=np.bool)
     finished = False
     n = 0
+
+    # keeps track of costs
     c = []
+
     summary = None
 
+    # initialize hidden layers for sessions
     Hs_new = [np.zeros([self.batch_size, s_size], dtype=np.float32) for s_size in self.session_layers]
+    # initialize hidden layers for users
     Hu_new = [np.zeros([self.batch_size, u_size], dtype=np.float32) for u_size in self.user_layers]
+
+    # continue until no sessions or no users are available
     while not finished:
+
+      # identify how many items in parallel with the the user-parallel session approach can be processed
       session_minlen = (session_end - session_start).min()
       out_idx = data.ItemIdx.values[session_start]
+
+      # loop over batches, until any of user-parallel sessions is empty/no further items are in session
       for i in range(session_minlen - 1):
+
+        # indices of input items X (one item per user) and output items Y as indices for training
+        # output items from last item becomes input for next item
         in_idx = out_idx
         out_idx = data.ItemIdx.values[session_start + i + 1]
+
         #if self.n_sample:
           #   sample = self.neg_sampler.next_sample()
           #   y = np.hstack([out_idx, sample])
           # else:
         y = out_idx
 
+        # prepare input for NN
         feed_dict = {self.X: in_idx, self.Y: y, self.sstart: sstart, self.ustart: ustart}
+        # pass initialized hidden states to input for NN
         for j in range(len(self.Hs)):
           feed_dict[self.Hs[j]] = Hs_new[j]
         for j in range(len(self.Hu)):
           feed_dict[self.Hu[j]] = Hu_new[j]
 
+        # define which tensors to compute
         fetches = []
         if is_validation == False:
+          # merged is summary, need to return hidden states for sessions and users
           fetches = [self.merged, self.cost, self.Hs_new, self.Hu_new, self.global_step, self.lr, self.train_op]
         else:
           fetches = [self.merged, self.cost, self.Hs_new, self.Hu_new]
+
+        # run the network with input, fetches
         summary, cost, Hs_new, Hu_new, step, lr, _ = self.sess.run(fetches, feed_dict)
 
         n += 1
 
         if is_validation == False:
           self.train_writer.add_summary(summary, step)
-        # reset sstart and ustart
+
+        # reset sstart and ustart with zeros. Was it not already initialzed as zeros above??
         sstart = np.zeros_like(sstart, dtype=np.bool)
         ustart = np.zeros_like(ustart, dtype=np.bool)
+
         c.append(cost)
+
         if np.isnan(cost):
           logger.error('NaN error!')
           self.error_during_train = True
           return
+
+      # move session start forward in time by the number of items session_minlen which were processed
       session_start = session_start + session_minlen - 1
+
+      # identifieds sessions which have been finished processing
       session_start_mask = np.arange(len(session_iters))[(session_end - session_start) <= 1]
+      # reset the session hidden state
       sstart[session_start_mask] = True
+
+      # for sessions which are finished, move to next session
       for idx in session_start_mask:
+        # go to next session by incrementing
         session_iters[idx] += 1
+        # if there are no further sessions, end epoch
         if session_iters[idx] + 1 >= len(offset_sessions):
           finished = True
           break
+        # else assign new sessions/begin of sessions
         session_start[idx] = offset_sessions[session_iters[idx]]
         session_end[idx] = offset_sessions[session_iters[idx] + 1]
 
-      # reset the User hidden state at user change
+      # identifies which user has been finished processing
       user_change_mask = np.arange(len(user_iters))[(user_end - session_start <= 0)]
+      # reset the corresponding User hidden state at user change
       ustart[user_change_mask] = True
+
+      # for users which are finished, move to next user
       for idx in user_change_mask:
+        # go to next user by incrementing
         user_maxiter += 1
+        # if there are no further users, end epoch
         if user_maxiter + 1 >= len(offset_users):
           finished = True
           break
+        # fill batch (of fixed size) with new user
         user_iters[idx] = user_maxiter
         user_start[idx] = offset_users[user_maxiter]
         user_end[idx] = offset_users[user_maxiter + 1]
+        # add new sessions for new user
         session_iters[idx] = user_indptr[user_maxiter]
         session_start[idx] = offset_sessions[session_iters[idx]]
         session_end[idx] = offset_sessions[session_iters[idx] + 1]
+
+    # calculates and returns average cost/loss
     avgc = np.mean(c)
 
     return avgc
@@ -492,7 +543,7 @@ class HGRU4Rec:
     # why two my_patience?
     while epoch < self.n_epochs and my_patience > 0 and my_patience > 0:
 
-      # train on batches of epoch
+      # train on batches of epoch, return average cost/loss
       train_cost = self.iterate(train_data, offset_sessions, user_indptr)
 
       if np.isnan(train_cost):

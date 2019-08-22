@@ -48,6 +48,7 @@ parser.add_argument('--user_layers', type=str,default='100')
 parser.add_argument('--loss', type=str, default='top1')
 # activation function for GRU_usr and GRU_ses, options tanh or relu
 parser.add_argument('--hidden_act', type=str, default='tanh')
+# batch sizer of 50 or 100 used in paper, batch_size sets how many users per batch as user-parllel mini-batches are used.
 parser.add_argument('--batch_size', type=int, default=50)
 
 # applies dropout (keep prob) to output of each cell in GRU_usr

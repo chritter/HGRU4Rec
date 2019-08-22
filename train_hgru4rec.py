@@ -35,7 +35,7 @@ parser.add_argument('--early_stopping', action='store_true', default=False)
 # origin of input data, in hdf format
 parser.add_argument('--hdf_path', type=str, default='data/retail_rocket.hdf')
 # checkpoint directory (must exist)
-parser.add_argument('--checkpoint_dir', type=str, default=r'./model')
+parser.add_argument('--checkpoint_dir', type=str, default=r'./log/model')
 # saves TF summaries under 'train' for training
 parser.add_argument('--log_dir', type=str, default=r'./log')
 

@@ -437,6 +437,7 @@ class HGRU4Rec:
           # merged is summary, need to return hidden states for sessions and users
           fetches = [self.merged, self.cost, self.Hs_new, self.Hu_new, self.global_step, self.lr, self.train_op]
         else:
+          # for validation data we do not modify certain tensors and just return the hidden states, loss etc.
           fetches = [self.merged, self.cost, self.Hs_new, self.Hu_new]
 
         # run the network with input, fetches
@@ -552,6 +553,7 @@ class HGRU4Rec:
 
       # check on validation data for estimating the loss/cost
       if valid_data is not None:
+        # would we need to set is_validation=True in self.iterate?
         valid_cost = self.iterate(valid_data, offset_sessions_valid, user_indptr_valid)
         if best_valid is None or valid_cost < best_valid:
           best_valid = valid_cost
@@ -567,4 +569,4 @@ class HGRU4Rec:
       epoch += 1
 
       # temporarily commented
-      #self.saver.save(self.sess, '{}/hgru-model'.format(self.checkpoint_dir), global_step=epoch)
+      self.saver.save(self.sess, '{}/hgru-model'.format(self.checkpoint_dir), global_step=epoch)
